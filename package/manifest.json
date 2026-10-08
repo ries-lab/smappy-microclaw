@@ -1,0 +1,229 @@
+{
+  "package_id": "smappy",
+  "publisher": "ries-lab",
+  "version": "0.1.0",
+  "microclaw": ">=0.1,<2",
+  "kind": "executable",
+  "license": "BSD-3-Clause",
+  "source_url": "https://github.com/ries-lab/smappy-microclaw",
+  "issues_url": "https://github.com/ries-lab/smappy-microclaw/issues",
+  "skills": [
+    {
+      "name": "smappy-live-fitting",
+      "description": "Fit single-molecule localization data (SMLM) with SMAPpy while it is acquired or after, with the reconstruction shown in SMAPpy's window.",
+      "path": "SKILL.md"
+    }
+  ],
+  "python": ">=3.12,<3.13",
+  "platforms": [
+    "win_amd64"
+  ],
+  "protocol_version": "1.1",
+  "entry_point": {
+    "module": "smappy_microclaw.runner"
+  },
+  "operations": [
+    {
+      "name": "self_check",
+      "input_schema": {
+        "type": "object"
+      },
+      "output_schema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "fit_ndtiff",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "psf": {
+            "type": "string",
+            "enum": [
+              "gaussian",
+              "spline"
+            ],
+            "description": "PSF model: gaussian for 2D (no calibration); spline for 3D with a bead calibration (then calibration is required). Ask the user; never guess."
+          },
+          "channels": {
+            "type": "integer",
+            "enum": [
+              1,
+              2
+            ],
+            "description": "1 for one channel; 2 for a split two-channel image (two colours or biplane). Ask the user; never guess."
+          },
+          "calibration": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "Absolute path of the bead calibration (_3dcal.mat or .h5), usually saved beside the bead images; dual-colour mode for channels 2. Required for psf spline, not allowed otherwise."
+          },
+          "transform": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "Absolute path of the channel transformation file (or a dual-colour bead calibration). Required for psf gaussian with channels 2, not allowed otherwise."
+          },
+          "conversion_e_per_adu": {
+            "type": "number",
+            "minimum": 0.001,
+            "maximum": 1000,
+            "description": "Camera conversion, photoelectrons per count. Omit when SMAPpy's camera database or the dataset knows it; the worker refuses to start if nobody does."
+          },
+          "offset_adu": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "Camera baseline in counts (the value of a pixel that saw no light). Omit when the database or the dataset knows it."
+          },
+          "em_on": {
+            "type": "boolean",
+            "description": "EMCCD only: whether EM gain was on. Omit for an sCMOS camera."
+          },
+          "em_gain": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 10000,
+            "description": "EMCCD only: the EM gain the camera was set to. Required when EM gain was on and the dataset does not record it."
+          },
+          "pixel_size_um": {
+            "type": "number",
+            "minimum": 0.001,
+            "maximum": 100,
+            "description": "Pixel size in the sample, in micrometres. Omit when the dataset records it (Micro-Manager usually does)."
+          },
+          "camera": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "Name of an entry in SMAPpy's camera database, for a dataset whose camera cannot be identified from its metadata. Usually omitted."
+          },
+          "roi_size_px": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 31,
+            "description": "Side of the square fitted around each molecule, in camera pixels. Default 13; smaller is faster and suits dense data."
+          },
+          "cutoff": {
+            "type": "number",
+            "minimum": 0.1,
+            "maximum": 100,
+            "description": "Detection threshold in multiples of the noise. Default 1.7; higher finds fewer, brighter molecules."
+          },
+          "psf_sigma_px": {
+            "type": "number",
+            "minimum": 0.3,
+            "maximum": 5,
+            "description": "Approximate PSF width in camera pixels, for detection (and the Gaussian fit's start). Default 1.2."
+          }
+        },
+        "required": [
+          "psf",
+          "channels"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "fit_and_view",
+      "opens_window": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "psf": {
+            "type": "string",
+            "enum": [
+              "gaussian",
+              "spline"
+            ],
+            "description": "PSF model: gaussian for 2D (no calibration); spline for 3D with a bead calibration (then calibration is required). Ask the user; never guess."
+          },
+          "channels": {
+            "type": "integer",
+            "enum": [
+              1,
+              2
+            ],
+            "description": "1 for one channel; 2 for a split two-channel image (two colours or biplane). Ask the user; never guess."
+          },
+          "calibration": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "Absolute path of the bead calibration (_3dcal.mat or .h5), usually saved beside the bead images; dual-colour mode for channels 2. Required for psf spline, not allowed otherwise."
+          },
+          "transform": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "Absolute path of the channel transformation file (or a dual-colour bead calibration). Required for psf gaussian with channels 2, not allowed otherwise."
+          },
+          "conversion_e_per_adu": {
+            "type": "number",
+            "minimum": 0.001,
+            "maximum": 1000,
+            "description": "Camera conversion, photoelectrons per count. Omit when SMAPpy's camera database or the dataset knows it; the worker refuses to start if nobody does."
+          },
+          "offset_adu": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "Camera baseline in counts (the value of a pixel that saw no light). Omit when the database or the dataset knows it."
+          },
+          "em_on": {
+            "type": "boolean",
+            "description": "EMCCD only: whether EM gain was on. Omit for an sCMOS camera."
+          },
+          "em_gain": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 10000,
+            "description": "EMCCD only: the EM gain the camera was set to. Required when EM gain was on and the dataset does not record it."
+          },
+          "pixel_size_um": {
+            "type": "number",
+            "minimum": 0.001,
+            "maximum": 100,
+            "description": "Pixel size in the sample, in micrometres. Omit when the dataset records it (Micro-Manager usually does)."
+          },
+          "camera": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "Name of an entry in SMAPpy's camera database, for a dataset whose camera cannot be identified from its metadata. Usually omitted."
+          },
+          "roi_size_px": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 31,
+            "description": "Side of the square fitted around each molecule, in camera pixels. Default 13; smaller is faster and suits dense data."
+          },
+          "cutoff": {
+            "type": "number",
+            "minimum": 0.1,
+            "maximum": 100,
+            "description": "Detection threshold in multiples of the noise. Default 1.7; higher finds fewer, brighter molecules."
+          },
+          "psf_sigma_px": {
+            "type": "number",
+            "minimum": 0.3,
+            "maximum": 5,
+            "description": "Approximate PSF width in camera pixels, for detection (and the Gaussian fit's start). Default 1.2."
+          }
+        },
+        "required": [
+          "psf",
+          "channels"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object"
+      }
+    }
+  ]
+}

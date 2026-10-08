@@ -1,0 +1,4 @@
+# The worker's whole environment: SMAPpy, with its GUI (PySide6 is one of its
+# dependencies, not an extra).  Pinned to one release; the lock in locks/ is
+# what MicroClaw installs.
+smappy-smlm==0.3.0

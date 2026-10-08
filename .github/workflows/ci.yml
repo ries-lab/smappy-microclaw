@@ -1,0 +1,47 @@
+# The worker, tested where it runs: Windows, Python 3.12, the locked
+# environment, started as MicroClaw starts it.  MicroClaw's catalog intake
+# never runs a worker, and MicroClaw has no publisher-side check yet (R150), so
+# a schema or lifecycle mistake is found here or on a user's microscope.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # the same commit the release workflow packs with
+  MICROCLAW_COMMIT: 70976ee8382919d90fda50fe5f759f300639b113
+
+jobs:
+  worker:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: Micro-Claw/microclaw
+          ref: ${{ env.MICROCLAW_COMMIT }}
+          path: microclaw-rules
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: The release's environment, from its lock
+        shell: bash
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv -r locks/pylock.win_amd64.toml
+          # the test tools and MicroClaw's validators: beside the lock, not in it
+          uv pip install --python .venv pytest pytest-xdist cryptography==44.0.2 packaging==24.2
+      - name: Check the package format as intake will
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/microclaw-rules
+        run: |
+          .venv/Scripts/python -m microclaw.catalog_intake pack --locks locks --dir package \
+            --url https://example.org/package.zip --out "$RUNNER_TEMP/package.zip"
+      - name: Worker tests
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/microclaw-rules
+          QT_QPA_PLATFORM: offscreen
+        run: .venv/Scripts/python -m pytest tests -q -n 4
