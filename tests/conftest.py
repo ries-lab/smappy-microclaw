@@ -45,7 +45,8 @@ class Worker:
         env = {k: v for k, v in os.environ.items()
                if not k.upper().startswith("MICROCLAW_")}
         env.update(PYTHONPATH=str(PACKAGE), PYTHONUNBUFFERED="1",
-                   PYTHONIOENCODING="utf-8", QT_QPA_PLATFORM="offscreen")
+                   PYTHONIOENCODING="utf-8", QT_QPA_PLATFORM="offscreen",
+                   SMAPPY_MICROCLAW_STACKS="60")   # where a hang is, if one is
         flags = 0x08000000 | 0x4000 if os.name == "nt" else 0
         self.process = subprocess.Popen(
             [sys.executable, "-u", "-m", "smappy_microclaw.runner"],
@@ -90,7 +91,11 @@ class Worker:
             if left <= 0:
                 raise TimeoutError(f"no {kind} in {timeout} s; stderr:\n"
                                    + "".join(self.stderr[-40:]))
-            message = self.messages.get(timeout=left)
+            try:
+                message = self.messages.get(timeout=left)
+            except queue.Empty:
+                raise TimeoutError(f"no {kind} in {timeout} s; stderr:\n"
+                                   + "".join(self.stderr[-80:])) from None
             if message is None:
                 raise EOFError(f"the worker ended before a {kind}; stderr:\n"
                                + "".join(self.stderr[-40:]))

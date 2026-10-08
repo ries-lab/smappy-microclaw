@@ -12,6 +12,13 @@ Three things here are easy to undo by accident:
   imported: Qt, the C++ fitter and smappy's own prints then land in the
   stderr tail MicroClaw keeps, and none of them can put a stray line into the
   stream MicroClaw parses as JSON (a worker failure, `design/83`).
+* **stdin is read through a duplicate, and fd 0 is pointed at the null
+  device.**  On Windows a synchronous pipe serialises every call on its
+  handle: while the reader thread waits in ``ReadFile``, any other thread that
+  so much as asks what fd 0 is (``GetFileType``, ``isatty``, ``fstat`` -- which
+  importing a library may do) waits with it, until the next lifecycle message,
+  which may be hours away.  With fd 0 on the null device, nothing but the
+  reader can reach the pipe.
 * **Lifecycle messages are read on a thread** and turned into two
   `threading.Event`s -- ``stop`` and ``writer_finished`` -- which is all the
   fit needs to know.  Only an acquisition notification that says the writer
@@ -143,9 +150,20 @@ def _protocol_stdout():
     return out
 
 
+def _protocol_stdin():
+    """The real stdin, for the job and the lifecycle; fd 0 then reads nothing."""
+    pipe = os.fdopen(os.dup(0), "rb", buffering=0)
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.close(null)
+    sys.stdin = open(os.devnull, "r", encoding="utf-8")
+    return pipe
+
+
 def main() -> int:
     out = _protocol_stdout()
-    stdin = sys.stdin.buffer
+    stdin = _protocol_stdin()
+    _watchdog()
     job = json.loads(stdin.readline(MAX_LINE))
     if job.get("protocol") != PROTOCOL or job.get("type") != "job":
         print("expected a microclaw.analysis.v1 job", file=sys.stderr)
@@ -163,6 +181,18 @@ def main() -> int:
             channel.result("failed", {}, complete=False,
                            failure=f"{type(error).__name__}: {error}")
         return 0
+
+
+def _watchdog() -> None:
+    """For a test: dump every thread's stack to stderr every N seconds.
+
+    ``SMAPPY_MICROCLAW_STACKS=N`` turns it on; without it, nothing happens.
+    A worker that hangs on a machine one cannot log in to says where.
+    """
+    seconds = os.environ.get("SMAPPY_MICROCLAW_STACKS")
+    if seconds:
+        import faulthandler
+        faulthandler.dump_traceback_later(float(seconds), repeat=True, file=sys.stderr)
 
 
 def _exit(code: int) -> None:
