@@ -51,6 +51,13 @@ def test_the_fit_waits_out_a_pause_and_ends_when_the_writer_has_finished(
     assert result["input_complete"] is True
     assert result["output"]["frames"] == len(frames)
     assert result["output"]["camera"]["conversion"]["from"].startswith("user")
+    # the precision as the Statistics plugin reads it, and the density per
+    # 250 x 250 pixels the lab compares (this frame is 32 x 32)
+    precision = result["output"]["precision_nm"]
+    assert 0 < precision["histogram_max"] < 50 and precision["sigma_c"] > 0
+    per_frame = result["output"]["localizations_per_frame"]
+    assert result["output"]["localizations_per_frame_per_250px"] == \
+        pytest.approx(per_frame * 250 ** 2 / 32 ** 2, rel=0.01)
     artifact, = result["artifacts"]
     assert artifact["validity"] == "final"
     assert artifact["sha256"] == digest(out / artifact["path"])

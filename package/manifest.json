@@ -109,7 +109,7 @@
             "type": "number",
             "minimum": 0.1,
             "maximum": 100,
-            "description": "Detection threshold in multiples of the noise. Default 1.7; higher finds fewer, brighter molecules."
+            "description": "Detection threshold: per frame, the median of the local maxima plus this many times their 20-80 % spread. Default 1.7; higher finds fewer, brighter molecules."
           },
           "psf_sigma_px": {
             "type": "number",
@@ -206,7 +206,7 @@
             "type": "number",
             "minimum": 0.1,
             "maximum": 100,
-            "description": "Detection threshold in multiples of the noise. Default 1.7; higher finds fewer, brighter molecules."
+            "description": "Detection threshold: per frame, the median of the local maxima plus this many times their 20-80 % spread. Default 1.7; higher finds fewer, brighter molecules."
           },
           "psf_sigma_px": {
             "type": "number",

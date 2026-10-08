@@ -53,8 +53,9 @@ for them, every time, unless they told you in this session:
 
 Everything else uses SMAPpy's defaults, which suit most data. Change them only
 when the user asks: `roi_size_px` (default 13; smaller for dense data),
-`cutoff` (default 1.7 times the noise; higher finds fewer, brighter
-molecules), `psf_sigma_px` (default 1.2 camera pixels).
+`cutoff` (default 1.7: in each frame a candidate counts when it is brighter
+than the median of the frame's local maxima plus 1.7 times their 20-80 %
+spread; higher finds fewer, brighter molecules), `psf_sigma_px` (default 1.2 camera pixels).
 
 ## How to call it
 
@@ -96,16 +97,33 @@ until they close it.
 - **Progress** in status lines: the frame number, frames per second and the
   number of localizations so far.
 - **The result's `output`**: `frames`, `localizations`,
-  `localizations_per_frame`, `median_photons`, the median precision
-  (`median_xy_err_nm`), `fit_seconds`, and `camera`: every camera value with
-  where it came from ("user", "metadata", or the camera database). Report the
-  camera's sources to the user. A value from "user" is one you passed.
+  `localizations_per_frame`, `localizations_per_frame_per_250px` (the density:
+  per frame in an area of 250 x 250 camera pixels, per channel for a
+  two-channel fit), `median_photons`, `precision_nm`, `fit_seconds`, and
+  `camera`: every camera value with where it came from ("user", "metadata",
+  or the camera database). Report the camera's sources to the user. A value
+  from "user" is one you passed.
+- **`precision_nm`** is the localization precision as SMAPpy's Statistics
+  plugin reports it: `histogram_max`, where the histogram of the
+  localizations' precision peaks; `model_max`, the peak of the distribution
+  the photon counts imply, fitted to that histogram; and `sigma_c`, that
+  model's precision at the mean photon count. Judge the precision by
+  `histogram_max` (or `sigma_c`), not by a mean or median, which dim
+  localizations pull up.
 
-How to read the numbers: for dSTORM a few to a few tens of localizations
-per frame in the field is typical; far more usually means the blinking is too
-dense to fit (molecules overlap), near zero means too few molecules are on or
-the cutoff is too high. Median photons of a few hundred to a few thousand and
-a median precision of 5 to 20 nm are typical of a good dSTORM dataset.
+How to read the numbers. Typical of a good dataset:
+
+| technique | localizations per frame per 250 x 250 px | precision | photons |
+| --- | --- | --- | --- |
+| dSTORM, DNA-PAINT | about 5 to 50 | 2 to 8 nm | 1000 to 10000 |
+| PALM | about 5 to 50 | 4 to 20 nm | 250 to 3000 |
+
+Far more localizations per frame usually means the blinking is too dense to
+fit (molecules overlap); near zero means too few molecules are on, or the
+cutoff is too high. A precision well above the range, with photons in it,
+points at defocus or a wrong camera conversion; photons well below the range
+point at the laser power, the buffer or the dye. Say which numbers are out of
+range and let the user decide; do not change parameters on your own.
 
 ## If it fails
 
@@ -116,7 +134,7 @@ The failure message says what was wrong. The common ones:
 - *"a spline fit needs a calibration"* or *"... needs transform"*: ask the
   user for the file.
 - *"... does not exist"* or *"must be an absolute path"*: the path is wrong.
-- *"no frame appeared ... within 600 s"*: the camera wrote nothing.
+- *"no frame appeared ... within 120 s"*: the camera wrote nothing.
 
 Report anything else to the user as it is; problems with the fit itself go to
 SMAPpy's publisher through *Report to publisher*.

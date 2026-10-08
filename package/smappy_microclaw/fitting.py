@@ -40,7 +40,10 @@ FITTERS = {("gaussian", 1): "Localize/Gaussian 2D",
            ("spline", 2): "Localize/Spline 3D 2C"}
 # how long the first frame may take to appear: MicroClaw starts the worker
 # when the dataset is created, which is before the camera has delivered
-APPEAR_SECONDS = 600.0
+APPEAR_SECONDS = 120.0
+# the area the density is given per, in camera pixels: what the lab compares
+# by eye -- "5 to 50 localizations per frame in 250 x 250 pixels"
+DENSITY_AREA_PX = 250 * 250
 STATUS_SECONDS = 5.0             # at most one progress line this often
 
 
@@ -172,8 +175,11 @@ def fitter_and_values(params: dict, dataset: str, out: Path) -> Tuple[str, Dict[
     """The fitter and its dotted settings, from the job's parameters."""
     psf, channels = params["psf"], int(params["channels"])
     plugin = FITTERS[(psf, channels)]
+    # positions in nm, named rather than left to the fitter's default: smappy
+    # 0.3.0's settings_from loses the default a fitter declares for its fit
+    # part, and the result, SKILL.md and the precision figures are all in nm
     values: Dict[str, Any] = {"source.path": str(dataset), "source.live": True,
-                              "output.path": str(out)}
+                              "output.path": str(out), "fit.output_unit": "nm"}
     calibration, transform = params.get("calibration"), params.get("transform")
     if psf == "spline":
         if not calibration:
@@ -251,6 +257,7 @@ def check_camera(dataset: str, settings, stop) -> Dict[str, Any]:
                      "from": str(resolution.sources.get(name, "missing"))}
               for name in ("conversion", "offset", "pixelsize_um", "em_on", "emgain")}
     report["camera"] = resolution.camera_name or values.get("camera_name") or ""
+    report["frame_px"] = [int(n) for n in source.shape]          # (height, width)
     if missing:
         names = {"conversion": "conversion_e_per_adu", "offset": "offset_adu",
                  "pixelsize_um": "pixel_size_um"}
@@ -284,12 +291,34 @@ def _output(plugin, camera, channel, stats=None, locs=None) -> Dict[str, Any]:
         out["localizations"] = int(len(locs))
         if "photons" in locs:
             out["median_photons"] = _plain(np.median(locs["photons"]))
-        err = next((n for n in ("xy_err_nm", "xy_err_pix") if n in locs), None)
-        if err:
-            out[f"median_{err}"] = _plain(np.median(locs[err]))
+        if "xy_err_nm" in locs:
+            out["precision_nm"] = precision(locs["xy_err_nm"])
         if out.get("frames"):
-            out["localizations_per_frame"] = round(len(locs) / out["frames"], 2)
+            per_frame = len(locs) / out["frames"]
+            out["localizations_per_frame"] = round(per_frame, 2)
+            height, width = camera.get("frame_px") or (0, 0)
+            # a two-channel fit gives one localization per molecule, on half
+            # the chip: the density is per channel, as one would count it
+            area = height * width / (2 if plugin.endswith("2C") else 1)
+            if area:
+                out["localizations_per_frame_per_250px"] = round(
+                    per_frame * DENSITY_AREA_PX / area, 2)
     return out
+
+
+def precision(xy_err_nm) -> Dict[str, Any]:
+    """The localization precision as the lab reads it: where its histogram peaks.
+
+    SMAPpy's Statistics plugin (`precision_distribution`): the histogram's
+    maximum, the maximum of the model the exponential photon distribution
+    implies, and that model's ``sigma_c`` (the precision at the mean photon
+    count).  Not the median, which the long tail of dim localizations pulls up.
+    """
+    from smappy.plugins.statistics import precision_distribution
+    stats = precision_distribution(xy_err_nm).stats
+    return {"histogram_max": _plain(stats.get("histogram_max")),
+            "model_max": _plain(stats.get("max")),
+            "sigma_c": _plain(stats.get("sigma_c"))}
 
 
 def _artifacts(output_dir: Path, validity: str):
