@@ -49,6 +49,10 @@ STATUS_SECONDS = 5.0             # at most one progress line this often
 # this many frames in one message
 METRICS_SECONDS = 0.1
 METRICS_MAX_FRAMES = 2000
+# which localizations the per-frame count counts, unless the job says
+# otherwise: only secure ones -- bright, precise and well fitted
+COUNT_DEFAULTS = {"count_min_photons": 500.0, "count_max_precision_nm": 15.0,
+                  "count_min_logl_rel": -1.0}
 
 
 class Refused(ValueError):
@@ -321,15 +325,19 @@ class Metrics:
     got and how far behind the camera it is.  Every frame is sent exactly
     once, in order, a frame with none counted as 0: MicroClaw's controller
     applies its law per frame, so the smoothing is its gain, not a window
-    here.  Which localizations count is the job's: ``count_min_photons`` and
-    ``count_max_precision_nm``.  Frames are dataset ordinals, from 0.
+    here.  Which localizations count is the job's: ``count_min_photons``,
+    ``count_max_precision_nm`` and ``count_min_logl_rel`` (`COUNT_DEFAULTS`
+    when it does not say).  Frames are dataset ordinals, from 0.
     """
 
     def __init__(self, channel, declared: Dict[str, Any], params: Dict[str, Any],
                  seconds: float = METRICS_SECONDS):
         self.channel, self.declared, self.seconds = channel, declared, seconds
-        self.min_photons = params.get("count_min_photons")
-        self.max_error_nm = params.get("count_max_precision_nm")
+        count = {**COUNT_DEFAULTS, **{k: v for k, v in params.items()
+                                      if k in COUNT_DEFAULTS and v is not None}}
+        self.filters = [("photons", ">=", float(count["count_min_photons"])),
+                        ("xy_err_nm", "<=", float(count["count_max_precision_nm"])),
+                        ("logl_rel", ">=", float(count["count_min_logl_rel"]))]
         self.counts: Dict[int, int] = {}          # frame -> counted, not yet sent
         self.next = 0                             # the first frame not yet sent
         self.fitted = None                        # the last ``fitted`` payload
@@ -341,10 +349,10 @@ class Metrics:
         if event == "block" and len(payload):
             import numpy as np
             keep = np.ones(len(payload), bool)
-            if self.min_photons is not None and "photons" in payload:
-                keep &= np.asarray(payload["photons"], float) >= float(self.min_photons)
-            if self.max_error_nm is not None and "xy_err_nm" in payload:
-                keep &= np.asarray(payload["xy_err_nm"], float) <= float(self.max_error_nm)
+            for column, op, bound in self.filters:
+                if column in payload:            # NaN fails either way: not secure
+                    values = np.asarray(payload[column], float)
+                    keep &= values >= bound if op == ">=" else values <= bound
             frames, n = np.unique(np.asarray(payload["frame"], np.int64)[keep],
                                   return_counts=True)
             for frame, count in zip(frames.tolist(), n.tolist()):

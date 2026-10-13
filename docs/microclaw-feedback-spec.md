@@ -174,6 +174,14 @@ Example (SMAPpy's `fit_ndtiff` / `fit_and_view`):
   starts at the frame after the previous such message ended
   (`first == previous last + 1`), so every frame is counted exactly once and a
   frame with no localizations is sent as `0`, never skipped.
+- **At high frame rates a message carries many frames.**  The worker sends
+  at most 10 messages a second, each with every frame fitted since the last
+  one: at 1,000 frames/s about 100 frames a message; when the fit catches up
+  after falling behind, up to 2,000, split into further messages beyond that.
+  A per-frame count is a few bytes, so 2,000 frames stay far inside the line
+  bound.  Nothing is lost or averaged: the controller applies the law to each
+  frame and writes once (§5.5), so the frame rate changes how many frames a
+  write answers for, not what the law computes.
 - Allowed only for operations that declare `metrics`, and only before the
   `result`.  The 65,536-byte line bound applies.
 - Rate: the worker sends at most **10 per second**.  The supervisor does not
@@ -334,7 +342,7 @@ stop_reason, stop_value}`.  The write timings join the run's
 - Controller: the law per frame as counts arrive; a write at most every
   `write_interval_s` (default 0.2 s); a write is the setter's 41–97 µs plus
   the bridge round trip (`design/78`).  So the power answers a frame about
-  0.1–0.3 s after it was written.
+  0.1–0.3 s after it was written, whatever the frame rate.
 - **Gate measurement**: on the rig, during a sequenced burst, report per
   decision: frame ordinal written → metric received → write applied, and
   whether frame cadence changed with the controller on vs off
@@ -409,10 +417,11 @@ stop_reason, stop_value}`.  The write timings join the run's
   SMAPpy `NOTES.md`), the worker sends the per-frame counts of every frame
   fitted since its last message — zeros included — with the counters, at
   most 10 messages a second and 2,000 frames a message.
-- Which localizations are counted is the job's choice, through two optional
-  parameters: `count_min_photons` (count only those with at least this many
-  photons) and `count_max_precision_nm` (only those localized at least this
-  precisely, SMAPpy's `xy_err_nm`).  Without them every localization counts.
+- Only **secure** localizations are counted, so the controller is not fed
+  noise: by default those with at least 500 photons, a precision of 15 nm or
+  better (SMAPpy's `xy_err_nm`) and a relative log-likelihood of at least −1
+  (`logl_rel`, SMAP's LLrel).  The job can change each bound:
+  `count_min_photons`, `count_max_precision_nm`, `count_min_logl_rel`.
   `localizations` (the counter) is always all of them.
 - `frames_behind` comes from SMAPpy's watch (`on_behind`): frames in the
   NDTiff index not yet read.  The reader runs at most two blocks ahead of the
