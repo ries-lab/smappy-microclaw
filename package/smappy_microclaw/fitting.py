@@ -93,7 +93,7 @@ def headless(plugin, settings, camera, output_dir: Path, channel) -> int:
                        _artifacts(output_dir, "partial"), complete=False,
                        failure=f"{type(error).__name__}: {error}")
         return 0
-    stopped = bool(result.data.get("stopped"))
+    stopped = bool(result.stopped)
     complete = not stopped and channel.writer_finished.is_set()
     state = "cancelled" if stopped else "succeeded"
     channel.result(state, _output(plugin, camera, channel,
@@ -144,7 +144,7 @@ def self_check(channel) -> int:
     camera = CameraMetadata(conversion=0.5, offset=100.0, pixelsize_um=0.1)
     locs, _ = fit_stack([(0, frames)], camera,
                         PeakFinder(DoGFilter(1.2), DynamicCutoff(1.7)),
-                        GaussianPSF(sigma=1.2), FitSettings(output_unit="nm"))
+                        GaussianPSF(sigma=1.2), FitSettings())
     found, error = _against_truth(locs, truth, field_nm=100 * 100.0)
     if found < 0.5 or error is None or error > 30:
         raise RuntimeError(f"the self-check fit found {found:.0%} of the clean "
@@ -175,11 +175,9 @@ def fitter_and_values(params: dict, dataset: str, out: Path) -> Tuple[str, Dict[
     """The fitter and its dotted settings, from the job's parameters."""
     psf, channels = params["psf"], int(params["channels"])
     plugin = FITTERS[(psf, channels)]
-    # positions in nm, named rather than left to the fitter's default: smappy
-    # 0.3.0's settings_from loses the default a fitter declares for its fit
-    # part, and the result, SKILL.md and the precision figures are all in nm
+    # positions come out in nm: SMAPpy writes a fit's table in nm only
     values: Dict[str, Any] = {"source.path": str(dataset), "source.live": True,
-                              "output.path": str(out), "fit.output_unit": "nm"}
+                              "output.path": str(out)}
     calibration, transform = params.get("calibration"), params.get("transform")
     if psf == "spline":
         if not calibration:
