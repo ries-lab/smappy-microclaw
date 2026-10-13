@@ -45,6 +45,14 @@ APPEAR_SECONDS = 120.0
 # by eye -- "5 to 50 localizations per frame in 250 x 250 pixels"
 DENSITY_AREA_PX = 250 * 250
 STATUS_SECONDS = 5.0             # at most one progress line this often
+# metrics (docs/microclaw-feedback-spec.md): at most this often, and at most
+# this many frames in one message
+METRICS_SECONDS = 0.1
+METRICS_MAX_FRAMES = 2000
+# which localizations the per-frame count counts, unless the job says
+# otherwise: only secure ones -- bright, precise and well fitted
+COUNT_DEFAULTS = {"count_min_photons": 500.0, "count_max_precision_nm": 15.0,
+                  "count_min_logl_rel": -1.0}
 
 
 class Refused(ValueError):
@@ -83,8 +91,10 @@ def headless(plugin, settings, camera, output_dir: Path, channel) -> int:
     from smappy import plugins
     from smappy.plugins import Context
 
+    metrics = Metrics(channel, declared_metrics(channel.job["operation"]),
+                      channel.job["parameters"])
     context = Context(stop=channel.stop, writer_finished=channel.writer_finished,
-                      progress=_throttled(channel.status))
+                      progress=_throttled(channel.status), stream=metrics.stream)
     try:
         result = plugins.get(plugin)().run(context, settings)
     except Exception as error:
@@ -93,6 +103,7 @@ def headless(plugin, settings, camera, output_dir: Path, channel) -> int:
                        _artifacts(output_dir, "partial"), complete=False,
                        failure=f"{type(error).__name__}: {error}")
         return 0
+    metrics.send(force=True)
     stopped = bool(result.stopped)
     complete = not stopped and channel.writer_finished.is_set()
     state = "cancelled" if stopped else "succeeded"
@@ -108,7 +119,11 @@ def window(plugin, settings, camera, output_dir: Path, channel) -> int:
 
     from .runner import detach_stderr
 
+    metrics = Metrics(channel, declared_metrics(channel.job["operation"]),
+                      channel.job["parameters"])
+
     def finished(outcome) -> None:
+        metrics.send(force=True)
         locs = live.session.locs if live.session is not None else None
         validity = "final" if outcome.state == "succeeded" else "partial"
         channel.result(outcome.state,
@@ -119,6 +134,9 @@ def window(plugin, settings, camera, output_dir: Path, channel) -> int:
 
     live = LiveSession(plugin, settings, on_finished=finished,
                        on_progress=_throttled(channel.status),
+                       # only asked for under a manifest that declares metrics:
+                       # smappy 0.4.0's LiveSession has no on_stream
+                       **({"on_stream": metrics.stream} if metrics.declared else {}),
                        stop=channel.stop, writer_finished=channel.writer_finished)
     live.run()
     return 0
@@ -273,6 +291,98 @@ def _camera_line(camera: Dict[str, Any]) -> str:
         if entry["value"] is not None:
             parts.append(f"{name} {entry['value']} ({entry['from'].split(':')[0]})")
     return f"camera {camera['camera'] or '?'}: " + ", ".join(parts)
+
+
+# -------------------------------------------------------------- metrics
+def declared_metrics(operation: str) -> Dict[str, Any]:
+    """The metrics this release's manifest declares for ``operation``.
+
+    Only a protocol 1.2 manifest may declare them, and MicroClaw does not
+    accept 1.2 yet (docs/microclaw-feedback-spec.md): the released manifest
+    declares none, so nothing is sent, and the tests run the worker under a
+    1.2 manifest to show the interface can be produced.
+    """
+    import json
+    try:
+        manifest = json.loads((Path(__file__).resolve().parents[1]
+                               / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if manifest.get("protocol_version") != "1.2":
+        return {}
+    for op in manifest.get("operations", []):
+        if op.get("name") == operation:
+            return dict(op.get("metrics") or {})
+    return {}
+
+
+class Metrics:
+    """The localizations counted in every frame, and the fit's counts, sent as
+    ``metrics`` messages while the fit runs (docs/microclaw-feedback-spec.md).
+
+    Fed by the fit's stream (`Context.emit`): ``block`` carries the
+    localizations of the frames just fitted, ``fitted`` how far the fit has
+    got and how far behind the camera it is.  Every frame is sent exactly
+    once, in order, a frame with none counted as 0: MicroClaw's controller
+    applies its law per frame, so the smoothing is its gain, not a window
+    here.  Which localizations count is the job's: ``count_min_photons``,
+    ``count_max_precision_nm`` and ``count_min_logl_rel`` (`COUNT_DEFAULTS`
+    when it does not say).  Frames are dataset ordinals, from 0.
+    """
+
+    def __init__(self, channel, declared: Dict[str, Any], params: Dict[str, Any],
+                 seconds: float = METRICS_SECONDS):
+        self.channel, self.declared, self.seconds = channel, declared, seconds
+        count = {**COUNT_DEFAULTS, **{k: v for k, v in params.items()
+                                      if k in COUNT_DEFAULTS and v is not None}}
+        self.filters = [("photons", ">=", float(count["count_min_photons"])),
+                        ("xy_err_nm", "<=", float(count["count_max_precision_nm"])),
+                        ("logl_rel", ">=", float(count["count_min_logl_rel"]))]
+        self.counts: Dict[int, int] = {}          # frame -> counted, not yet sent
+        self.next = 0                             # the first frame not yet sent
+        self.fitted = None                        # the last ``fitted`` payload
+        self.last_sent = -math.inf
+
+    def stream(self, event: str, payload) -> None:
+        if not self.declared:
+            return
+        if event == "block" and len(payload):
+            import numpy as np
+            keep = np.ones(len(payload), bool)
+            for column, op, bound in self.filters:
+                if column in payload:            # NaN fails either way: not secure
+                    values = np.asarray(payload[column], float)
+                    keep &= values >= bound if op == ">=" else values <= bound
+            frames, n = np.unique(np.asarray(payload["frame"], np.int64)[keep],
+                                  return_counts=True)
+            for frame, count in zip(frames.tolist(), n.tolist()):
+                self.counts[frame] = self.counts.get(frame, 0) + count
+        elif event == "fitted":
+            self.fitted = payload
+            self.send()
+
+    def send(self, force: bool = False) -> None:
+        if not self.declared or self.fitted is None:
+            return
+        now = time.monotonic()
+        end = int(self.fitted["frames"])            # frames 0 .. end-1 fitted
+        if end <= self.next or (not force and now - self.last_sent < self.seconds):
+            return
+        while self.next < end:
+            first = self.next
+            last = min(end, first + METRICS_MAX_FRAMES) - 1
+            values = {"localizations_per_frame": [self.counts.pop(f, 0)
+                                                  for f in range(first, last + 1)]}
+            if last == end - 1:
+                # the counts describe frames 0 .. end-1: only with the last piece
+                values.update(localizations=int(self.fitted["localizations"]),
+                              frames_fitted=end,
+                              frames_behind=int(self.fitted.get("behind") or 0))
+            values = {k: v for k, v in values.items() if k in self.declared}
+            if values:
+                self.channel.metrics(first, last, values)
+            self.next = last + 1
+        self.last_sent = now
 
 
 # --------------------------------------------------------------- output

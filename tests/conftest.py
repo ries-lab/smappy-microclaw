@@ -30,9 +30,11 @@ PROTOCOL = "microclaw.analysis.v1"
 
 
 class Worker:
-    def __init__(self, operation, parameters=None, dataset=None, output_dir=None):
+    def __init__(self, operation, parameters=None, dataset=None, output_dir=None,
+                 package=PACKAGE, metrics=None):
         from microclaw.skill_packages import validate_job
         self.operation = operation
+        self.metrics = metrics           # declared: metrics lines are checked by the spec
         self.job_id = uuid.uuid4().hex
         job = {"protocol": PROTOCOL, "type": "job", "job_id": self.job_id,
                "release": {"publisher": "ries-lab", "package_id": "smappy",
@@ -44,7 +46,7 @@ class Worker:
         validate_job(job)
         env = {k: v for k, v in os.environ.items()
                if not k.upper().startswith("MICROCLAW_")}
-        env.update(PYTHONPATH=str(PACKAGE), PYTHONUNBUFFERED="1",
+        env.update(PYTHONPATH=str(package), PYTHONUNBUFFERED="1",
                    PYTHONIOENCODING="utf-8", QT_QPA_PLATFORM="offscreen",
                    SMAPPY_MICROCLAW_STACKS="60")   # where a hang is, if one is
         flags = 0x08000000 | 0x4000 if os.name == "nt" else 0
@@ -61,9 +63,22 @@ class Worker:
 
     def _read(self):
         from microclaw.skill_packages import validate_worker_message
+        last, counters, per_frame_last = None, {}, None
         for raw in self.process.stdout:
             message = json.loads(raw)
-            validate_worker_message(message, job_id=self.job_id, operation=self.operation)
+            if message.get("type") == "metrics" and self.metrics is not None:
+                # protocol 1.2, which MicroClaw does not have yet: the spec's
+                # own validator (docs/microclaw-feedback-spec.md, section 9)
+                last = spec_validator()(message, job_id=self.job_id, declared=self.metrics,
+                                        previous_last=last, previous_counters=counters,
+                                        previous_per_frame_last=per_frame_last)
+                values = message["values"]
+                counters.update({k: v for k, v in values.items()
+                                 if self.metrics[k]["kind"] == "counter"})
+                if any(self.metrics[k]["kind"] == "per_frame" for k in values):
+                    per_frame_last = last
+            else:
+                validate_worker_message(message, job_id=self.job_id, operation=self.operation)
             self.messages.put(message)
         self.messages.put(None)
 
@@ -110,6 +125,20 @@ class Worker:
         if self.process.poll() is None:
             self.process.kill()
         self.process.wait(10)
+
+
+SPEC = Path(__file__).resolve().parents[1] / "docs" / "microclaw-feedback-spec.md"
+
+
+def spec_validator():
+    """`validate_metrics_message`, executed from the spec's section 9 as written."""
+    text = SPEC.read_text(encoding="utf-8")
+    section = text[text.index("## 9."):]
+    code = section[section.index("```python") + len("```python"):]
+    code = code[:code.index("```")]
+    namespace = {}
+    exec(code, namespace)
+    return namespace["validate_metrics_message"]
 
 
 @pytest.fixture

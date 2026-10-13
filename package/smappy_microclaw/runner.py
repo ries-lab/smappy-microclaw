@@ -78,6 +78,12 @@ class Channel:
     def status(self, text: str) -> None:
         self.emit("status", message=_line(text, MAX_STATUS))
 
+    def metrics(self, first: int, last: int, values: dict) -> None:
+        """Numbers while fitting: protocol 1.2, not yet in MicroClaw
+        (docs/microclaw-feedback-spec.md); sent only when the manifest
+        declares them (`fitting.declared_metrics`)."""
+        self.emit("metrics", frames=[int(first), int(last)], values=values)
+
     def result(self, state: str, output: dict, artifacts=(), complete=None,
                failure: str = "") -> None:
         fields = dict(state=state, output=output, artifacts=list(artifacts))
