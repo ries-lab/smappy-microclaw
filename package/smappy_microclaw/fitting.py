@@ -45,10 +45,10 @@ APPEAR_SECONDS = 120.0
 # by eye -- "5 to 50 localizations per frame in 250 x 250 pixels"
 DENSITY_AREA_PX = 250 * 250
 STATUS_SECONDS = 5.0             # at most one progress line this often
-# metrics (docs/microclaw-feedback-spec.md): at most this often, over this
-# many of the last frames fitted
+# metrics (docs/microclaw-feedback-spec.md): at most this often, and at most
+# this many frames in one message
 METRICS_SECONDS = 0.1
-METRICS_WINDOW_FRAMES = 100
+METRICS_MAX_FRAMES = 2000
 
 
 class Refused(ValueError):
@@ -87,7 +87,8 @@ def headless(plugin, settings, camera, output_dir: Path, channel) -> int:
     from smappy import plugins
     from smappy.plugins import Context
 
-    metrics = Metrics(channel, declared_metrics(channel.job["operation"]))
+    metrics = Metrics(channel, declared_metrics(channel.job["operation"]),
+                      channel.job["parameters"])
     context = Context(stop=channel.stop, writer_finished=channel.writer_finished,
                       progress=_throttled(channel.status), stream=metrics.stream)
     try:
@@ -114,7 +115,8 @@ def window(plugin, settings, camera, output_dir: Path, channel) -> int:
 
     from .runner import detach_stderr
 
-    metrics = Metrics(channel, declared_metrics(channel.job["operation"]))
+    metrics = Metrics(channel, declared_metrics(channel.job["operation"]),
+                      channel.job["parameters"])
 
     def finished(outcome) -> None:
         metrics.send(force=True)
@@ -311,37 +313,42 @@ def declared_metrics(operation: str) -> Dict[str, Any]:
 
 
 class Metrics:
-    """Localizations per frame over the last frames fitted, and the counts,
-    sent as ``metrics`` messages while the fit runs.
+    """The localizations counted in every frame, and the fit's counts, sent as
+    ``metrics`` messages while the fit runs (docs/microclaw-feedback-spec.md).
 
     Fed by the fit's stream (`Context.emit`): ``block`` carries the
-    localizations of the frames just fitted, ``fitted`` how far the fit has got
-    and how far behind the camera it is.  Frames are dataset ordinals, from 0.
+    localizations of the frames just fitted, ``fitted`` how far the fit has
+    got and how far behind the camera it is.  Every frame is sent exactly
+    once, in order, a frame with none counted as 0: MicroClaw's controller
+    applies its law per frame, so the smoothing is its gain, not a window
+    here.  Which localizations count is the job's: ``count_min_photons`` and
+    ``count_max_precision_nm``.  Frames are dataset ordinals, from 0.
     """
 
-    def __init__(self, channel, declared: Dict[str, Any],
-                 window: int = METRICS_WINDOW_FRAMES, seconds: float = METRICS_SECONDS):
-        self.channel, self.declared = channel, declared
-        self.window, self.seconds = window, seconds
-        self.per_frame: Dict[int, int] = {}       # frame -> localizations
-        self.photons: Dict[int, list] = {}        # frame -> their photons
+    def __init__(self, channel, declared: Dict[str, Any], params: Dict[str, Any],
+                 seconds: float = METRICS_SECONDS):
+        self.channel, self.declared, self.seconds = channel, declared, seconds
+        self.min_photons = params.get("count_min_photons")
+        self.max_error_nm = params.get("count_max_precision_nm")
+        self.counts: Dict[int, int] = {}          # frame -> counted, not yet sent
+        self.next = 0                             # the first frame not yet sent
         self.fitted = None                        # the last ``fitted`` payload
         self.last_sent = -math.inf
-        self.sent_through = -1
 
     def stream(self, event: str, payload) -> None:
         if not self.declared:
             return
         if event == "block" and len(payload):
             import numpy as np
-            frames = np.asarray(payload["frame"], np.int64)
-            photons = (np.asarray(payload["photons"], float) if "photons" in payload
-                       else None)
-            for frame in np.unique(frames):
-                mine = frames == frame
-                self.per_frame[int(frame)] = self.per_frame.get(int(frame), 0) + int(mine.sum())
-                if photons is not None:
-                    self.photons.setdefault(int(frame), []).extend(photons[mine].tolist())
+            keep = np.ones(len(payload), bool)
+            if self.min_photons is not None and "photons" in payload:
+                keep &= np.asarray(payload["photons"], float) >= float(self.min_photons)
+            if self.max_error_nm is not None and "xy_err_nm" in payload:
+                keep &= np.asarray(payload["xy_err_nm"], float) <= float(self.max_error_nm)
+            frames, n = np.unique(np.asarray(payload["frame"], np.int64)[keep],
+                                  return_counts=True)
+            for frame, count in zip(frames.tolist(), n.tolist()):
+                self.counts[frame] = self.counts.get(frame, 0) + count
         elif event == "fitted":
             self.fitted = payload
             self.send()
@@ -351,27 +358,23 @@ class Metrics:
             return
         now = time.monotonic()
         end = int(self.fitted["frames"])            # frames 0 .. end-1 fitted
-        if end <= 0 or (not force and now - self.last_sent < self.seconds):
+        if end <= self.next or (not force and now - self.last_sent < self.seconds):
             return
-        if end - 1 == self.sent_through and not force:
-            return
-        first, last = max(0, end - self.window), end - 1
-        for old in [f for f in self.per_frame if f < first]:
-            del self.per_frame[old]
-            self.photons.pop(old, None)
-        n = sum(self.per_frame.values())
-        photons = [p for f in range(first, last + 1) for p in self.photons.get(f, ())]
-        values = {"localizations_per_frame": round(n / (last - first + 1), 4),
-                  "localizations": int(self.fitted["localizations"]),
-                  "frames_fitted": end,
-                  "frames_behind": int(self.fitted.get("behind") or 0)}
-        if photons:
-            import numpy as np
-            values["median_photons"] = round(float(np.median(photons)), 1)
-        values = {k: v for k, v in values.items() if k in self.declared}
-        if values:
-            self.channel.metrics(first, last, values)
-            self.last_sent, self.sent_through = now, last
+        while self.next < end:
+            first = self.next
+            last = min(end, first + METRICS_MAX_FRAMES) - 1
+            values = {"localizations_per_frame": [self.counts.pop(f, 0)
+                                                  for f in range(first, last + 1)]}
+            if last == end - 1:
+                # the counts describe frames 0 .. end-1: only with the last piece
+                values.update(localizations=int(self.fitted["localizations"]),
+                              frames_fitted=end,
+                              frames_behind=int(self.fitted.get("behind") or 0))
+            values = {k: v for k, v in values.items() if k in self.declared}
+            if values:
+                self.channel.metrics(first, last, values)
+            self.next = last + 1
+        self.last_sent = now
 
 
 # --------------------------------------------------------------- output

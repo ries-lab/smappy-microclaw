@@ -63,16 +63,20 @@ class Worker:
 
     def _read(self):
         from microclaw.skill_packages import validate_worker_message
-        last, counters = None, {}
+        last, counters, per_frame_last = None, {}, None
         for raw in self.process.stdout:
             message = json.loads(raw)
             if message.get("type") == "metrics" and self.metrics is not None:
                 # protocol 1.2, which MicroClaw does not have yet: the spec's
                 # own validator (docs/microclaw-feedback-spec.md, section 9)
                 last = spec_validator()(message, job_id=self.job_id, declared=self.metrics,
-                                        previous_last=last, previous_counters=counters)
-                counters.update({k: v for k, v in message["values"].items()
+                                        previous_last=last, previous_counters=counters,
+                                        previous_per_frame_last=per_frame_last)
+                values = message["values"]
+                counters.update({k: v for k, v in values.items()
                                  if self.metrics[k]["kind"] == "counter"})
+                if any(self.metrics[k]["kind"] == "per_frame" for k in values):
+                    per_frame_last = last
             else:
                 validate_worker_message(message, job_id=self.job_id, operation=self.operation)
             self.messages.put(message)
