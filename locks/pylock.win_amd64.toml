@@ -120,9 +120,9 @@ wheels = [{ url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc
 
 [[packages]]
 name = "smappy-smlm"
-version = "0.3.0"
-sdist = { url = "https://files.pythonhosted.org/packages/a0/19/50618cdd59292140e8b4b60a0336ee24c2d1fba9e61cadfc4611a4eaefa4/smappy_smlm-0.3.0.tar.gz", upload-time = 2026-10-08T09:54:21Z, size = 1273186, hashes = { sha256 = "6ae4b92e5bc3b76cabd98c2331d17ee4e33102eb4e153bfe751a6027b075d94f" } }
-wheels = [{ url = "https://files.pythonhosted.org/packages/6d/fe/1a365c2a7ccba214e361fe3769c8b60d6b25d38ae9d2fb0a2662b50d3459/smappy_smlm-0.3.0-cp312-cp312-win_amd64.whl", upload-time = 2026-10-08T09:54:08Z, size = 1744756, hashes = { sha256 = "bcbba5ccb99c59370c4bfb6ca914bbb98a8f340819aeff261067d54ff925dbd3" } }]
+version = "0.4.0"
+sdist = { url = "https://files.pythonhosted.org/packages/33/86/a848696aea664ebe78568531a667f75d235b876f3a4305effbf03eee6e41/smappy_smlm-0.4.0.tar.gz", upload-time = 2026-10-13T13:56:10Z, size = 1504418, hashes = { sha256 = "74d0f9667985520093fa349f8d83639efc780278099ea923b60b68452209ea60" } }
+wheels = [{ url = "https://files.pythonhosted.org/packages/92/43/e533f565fcfa998c175c4566fca46ba6a58dc922b6067b542eaa5206fc52/smappy_smlm-0.4.0-cp312-cp312-win_amd64.whl", upload-time = 2026-10-13T13:55:57Z, size = 1913629, hashes = { sha256 = "856a2558e476964021cc1a6b595c7b15ad4767c96e3529f07d1c447e12e27366" } }]
 
 [[packages]]
 name = "tifffile"
